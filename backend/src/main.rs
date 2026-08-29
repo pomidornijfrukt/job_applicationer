@@ -4,8 +4,9 @@ mod routes;
 mod services;
 mod tools;
 #[derive(Clone)]
-struct AppState {
+pub struct AppState {
     _db: PgPool,
+    pub http_client: reqwest::Client,
     healthy: bool,
 }
 
@@ -18,6 +19,7 @@ async fn main() {
                 println!("There is no database there:\n{err}");
                 panic!("Failed to connect to database");
             }),
+        http_client: reqwest::Client::new(),
         healthy: true,
     };
 
