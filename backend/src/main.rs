@@ -1,7 +1,7 @@
 use sqlx::PgPool;
 
 mod routes;
-mod services;
+pub mod services;
 mod tools;
 #[derive(Clone)]
 pub struct AppState {

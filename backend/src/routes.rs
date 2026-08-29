@@ -1,12 +1,14 @@
 use crate::{
     AppState,
-    services::{about, create_user, health_check, index, link_parse, list_users},
+    services::all_services::{
+        create_user, health_check, list_users, index
+    },
+    services::link::link_parse,
     tools::{create_both_get_routes, create_both_post_routes},
 };
 
 pub fn create_routes(state: AppState) -> axum::Router {
     let random_routes_lol = axum::Router::new()
-        .merge(create_both_get_routes("/troll/about", about))
         .merge(create_both_get_routes("/troll/users", list_users))
         .merge(create_both_get_routes("/troll/users/create", create_user))
         .merge(create_both_get_routes("/troll", index));

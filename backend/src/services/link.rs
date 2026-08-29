@@ -2,6 +2,7 @@ use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use url::Url;
 use std::fmt;
+
 use crate::AppState;
 
 #[derive(Deserialize, Serialize)]
@@ -143,26 +144,4 @@ pub async fn link_parse(
             status,
         }),
     )
-}
-
-pub async fn index() -> &'static str {
-    "Home"
-}
-pub async fn about() -> &'static str {
-    "About"
-}
-
-pub async fn list_users() -> &'static str {
-    "List users"
-}
-pub async fn create_user() -> &'static str {
-    "Create user"
-}
-
-pub async fn health_check(State(state): State<AppState>) -> &'static str {
-    if state.healthy {
-        "Healthy"
-    } else {
-        "Unhealthy"
-    }
 }
