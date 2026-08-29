@@ -1,9 +1,18 @@
-use axum::extract::State;
+use serde::Deserialize;
+use axum::{Json, extract::State};
 
 use crate::AppState;
 
+#[derive(Deserialize)]
+pub struct LinkBody {
+    pub link: String,
+}
 
+pub async fn link_parse(Json(payload): Json<LinkBody>) -> String {
+    println!("Link parse endpoint hit with link: {}", payload.link);
+    format!("Hi!, got a \n{}", payload.link)
 
+}
 
 pub async fn index() -> &'static str {
     "Home"
