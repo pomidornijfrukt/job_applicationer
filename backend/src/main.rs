@@ -1,8 +1,11 @@
 use sqlx::PgPool;
+use tracing_subscriber;
+
 
 mod routes;
 pub mod services;
 mod tools;
+mod errors;
 #[derive(Clone)]
 pub struct AppState {
     _db: PgPool,
@@ -12,6 +15,10 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() {
+    // degub tracing
+    tracing_subscriber::fmt::init();
+
+
     let state = AppState {
         _db: PgPool::connect("postgres://postgres:postgres@localhost:5432/postgres")
             .await

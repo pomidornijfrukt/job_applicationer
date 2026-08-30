@@ -1,9 +1,10 @@
 use axum::{Json, extract::State, http::StatusCode};
+use scraper::Html;
 use serde::{Deserialize, Serialize};
-use url::Url;
 use std::fmt;
+use url::Url;
 
-use crate::AppState;
+use crate::{AppState, errors::{AppError, ParsingError}, services::data_extracter::{JobPosting, extract_data, extract_json_ld, find_job_posting, scrape_page}};
 
 #[derive(Deserialize, Serialize)]
 pub struct LinkBody {
@@ -15,6 +16,7 @@ pub struct LinkBody {
 pub struct LinkResponse {
     pub link: String,
     pub status: String,
+    pub comment: Option<String>, // Optional comment field
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -95,7 +97,7 @@ impl LinkBody {
 pub async fn link_parse(
     State(state): State<AppState>,
     Json(mut payload): Json<LinkBody>,
-) -> (StatusCode, Json<LinkResponse>) {
+) -> Result<(StatusCode, Json<LinkResponse>), AppError> {
     match payload.validate_and_normalize(&state.http_client).await {
         UrlValidationStatus::Valid => {
             payload.optional_status = Some(UrlValidationStatus::Valid);
@@ -104,13 +106,14 @@ pub async fn link_parse(
         UrlValidationStatus::Invalid(reason) => {
             payload.optional_status = Some(UrlValidationStatus::Invalid(reason.clone()));
             // bad - tell the user
-            return (
+            return Ok((
                 StatusCode::BAD_REQUEST,
                 Json(LinkResponse {
                     link: payload.link,
                     status: reason,
+                    comment: None,
                 }),
-            );
+            ));
         }
 
         UrlValidationStatus::Unverified(reason) => {
@@ -120,14 +123,11 @@ pub async fn link_parse(
         }
     }
 
+
     if payload.link.as_str().trim().is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(LinkResponse {
-                link: payload.link,
-                status: "No link provided".to_string(),
-            }),
-        );
+        return Err(AppError::Parsing(ParsingError::NoDataError {
+            details: "No link provided".to_string(),
+        }));
     }
 
     let status = payload
@@ -136,12 +136,53 @@ pub async fn link_parse(
         .map(|s| s.to_string())
         .unwrap_or_else(|| "Unknown".to_string());
 
+    let comment = "comment";
+
+    match scrape_page(state.http_client, payload.link.as_str()).await {
+        Ok(response) => {
+            let html = response;
+            if html.contains("<html") {
+                println!("The response is an HTML page.");
+                let document = Html::parse_document(&html);
+                match extract_json_ld(&document) {
+                    Ok(json_ld) => {
+                        println!("All the job data:");
+
+                        let job_posting_value = match find_job_posting(&json_ld) {
+                            Some(value) => value,
+                            None => {
+                                return Err(AppError::Parsing(ParsingError::NoDataError {
+                                    details: "No valid JobPosting JSON-LD block found".to_string(),
+                                }));
+                            }
+                        };
+
+                        let job_posting = extract_data(job_posting_value, payload.link.clone())?;
+                        println!("Company name:{:?}", job_posting.company);
+                        println!("Technologies: {:?}", job_posting.technologies);
+                        println!("Compensation: {:?}", job_posting.compensation);
+                        println!("Job title: {:?}", job_posting.job_title);
+                    }
+                    Err(err) => {
+                        println!("Could not extract JSON-LD: {err}");
+                    }
+                }
+            } else {
+                println!("The response is not an HTML page.");
+            }
+        }
+        Err(error) => {
+            println!("Could not reach URL: {error}");
+        }
+    };
+
     println!("Link parse endpoint hit with link: {}", payload.link);
-    (
+    Ok((
         StatusCode::OK,
         Json(LinkResponse {
             link: payload.link,
             status,
+            comment: Some(comment.to_string()), // Add the comment to the response
         }),
-    )
+    ))
 }
