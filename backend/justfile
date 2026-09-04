@@ -6,13 +6,10 @@ default:
 run:
 	@cargo run
 
-run-debug $RUST_LOG="debug":
+run-debug $RUST_LOG="backend=debug,llm=debug,app_error=debug,info":
 	@cargo run
 
 run-info $RUST_LOG="info":
-	@cargo run
-
-run-log $RUST_LOG="debug":
 	@cargo run
 
 alias debug := run-debug

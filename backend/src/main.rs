@@ -1,6 +1,6 @@
 use sqlx::PgPool;
 use tracing::{error, info};
-
+use tracing_subscriber::EnvFilter;
 
 mod routes;
 pub mod services;
@@ -15,7 +15,12 @@ pub struct AppState {
 #[tokio::main]
 async fn main() {
     // degub tracing
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+    .with_env_filter(
+        EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("backend=debug,llm=debug,app_error=debug,info")),
+    )
+    .init();
 
     let state = AppState {
         _db: PgPool::connect("postgres://postgres:postgres@localhost:5432/postgres")

@@ -3,6 +3,7 @@ use app_error::{AppError, ParsingError};
 use scraper::Html;
 use llm::chat_llm;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fmt;
 use tracing::{debug, error, info, warn};
 use url::Url;
@@ -186,36 +187,40 @@ pub async fn link_parse(
                 match extract_json_ld(&document) {
                     Ok(json_ld) => {
                         debug!(?json_ld, "Extracted JSON-LD job data");
-                        let job_posting_value = match find_job_posting(&json_ld) {
-                            Some(value) => value,
-                            None => {
-                                return Err(AppError::Parsing(ParsingError::NoDataError {
-                                    details: "No valid JobPosting JSON-LD block found".to_string(),
-                                }));
+                        match find_job_posting(&json_ld) {
+                            Some(job_posting_value) => {
+                                let job_posting = extract_data(job_posting_value, payload.link.clone())?;
+                                debug!(
+                                    company = ?job_posting.company,
+                                    technologies = ?job_posting.technologies,
+                                    compensation = ?job_posting.compensation,
+                                    job_title = ?job_posting.job_title,
+                                    location = ?job_posting.location,
+                                    duration = ?job_posting.duration,
+                                    date_posted = ?job_posting.date_posted,
+                                    "Extracted job posting fields"
+                                );
                             }
-                        };
-
-                        let job_posting = extract_data(job_posting_value, payload.link.clone())?;
-                        debug!(
-                            company = ?job_posting.company,
-                            technologies = ?job_posting.technologies,
-                            compensation = ?job_posting.compensation,
-                            job_title = ?job_posting.job_title,
-                            location = ?job_posting.location,
-                            duration = ?job_posting.duration,
-                            date_posted = ?job_posting.date_posted,
-                            "Extracted job posting fields"
-                        );
+                            None => {
+                                warn!("No valid JobPosting JSON-LD block found; continuing with other extraction");
+                            }
+                        }
                     }
                     Err(err) => {
                         warn!(error = %err, "Could not extract JSON-LD");
                     }
                 }
 
-
-                // TODO: scrape the html for data
-
-
+                if llm_payloads.is_empty() {
+                    warn!("No LLM payloads extracted; going with just blank html");
+                    llm_payloads = match scrape_html(&html) {
+                        Ok(llm_payloads) => llm_payloads,
+                        Err(err) => {
+                            error! (error = %err, "Could not scrape HTML for LLM payloads");
+                            Vec::new()
+                        }
+                    };
+                }
 
                     (aboba, llm_payloads)
                 };
@@ -245,4 +250,16 @@ pub async fn link_parse(
             comment: Some(comment.to_string()), // Add the comment to the response
         }),
     ))
+}
+
+fn scrape_html(html: &str) -> Result<Vec<Value>, AppError> {
+    if html.contains("<html") {
+        let document = Html::parse_document(html);
+        extract_json_ld(&document)
+    } else {
+        Err(AppError::Parsing(ParsingError::InvalidFormat {
+            expected: "HTML document",
+            actual: "Response is not an HTML document".to_string(),
+        }))
+    }
 }
