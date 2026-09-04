@@ -5,6 +5,7 @@ use llm::chat_llm;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
+use tracing::{debug, error, info, warn};
 use url::Url;
 
 use crate::{
@@ -129,7 +130,7 @@ pub async fn link_parse(
         UrlValidationStatus::Unverified(reason) => {
             // good, but unverified - tell the user
             payload.optional_status = Some(UrlValidationStatus::Unverified(reason.clone()));
-            println!("URL {0} could not be verified: {reason}", payload.link);
+            warn!(url = %payload.link, reason = %reason, "URL could not be verified");
         }
     }
 
@@ -151,9 +152,9 @@ pub async fn link_parse(
     match scrape_page(state.http_client, payload.link.as_str()).await {
         Ok(response) => {
             let html = response;
-            println!("THE HTML:\n\n\n\n\n{html}\n\n\n\n\nTHE END OF HTML\n");
+            debug!(html = %html, "Received HTML response");
             if html.contains("<html") {
-                println!("The response is an HTML page.");
+                info!("The response is an HTML page");
                 let (aboba, llm_payloads) = {
                     let document = Html::parse_document(&html);
                     let mut aboba = String::new();
@@ -166,7 +167,7 @@ pub async fn link_parse(
                             for nuxt_payload in &payloads {
                                 let job = nuxt_handler.extract_job(&nuxt_payload, payload.link.as_str())?;
 
-                                println!("{:#?}", job);
+                                debug!(?job, "Extracted job from Nuxt payload");
                                 for candidate in collect_candidates(&nuxt_payload) {
                                     aboba.push_str(&format!(
                                         "Nuxt candidate {} = {:?}",
@@ -178,15 +179,14 @@ pub async fn link_parse(
                             };
                             llm_payloads = payloads;
                         }
-                        Err(err) => println!("Could not extract Nuxt payload: {err}"),
+                        Err(err) => warn!(error = %err, "Could not extract Nuxt payload"),
                     }
                 }
 
                 // SCRAPPING THE LD
                 match extract_json_ld(&document) {
                     Ok(json_ld) => {
-                        println!("All the job data:");
-                        println!("{:#?}", json_ld);
+                        debug!(?json_ld, "Extracted JSON-LD job data");
                         let job_posting_value = match find_job_posting(&json_ld) {
                             Some(value) => value,
                             None => {
@@ -197,16 +197,19 @@ pub async fn link_parse(
                         };
 
                         let job_posting = extract_data(job_posting_value, payload.link.clone())?;
-                        println!("Company name:{:?}", job_posting.company);
-                        println!("Technologies: {:?}", job_posting.technologies);
-                        println!("Compensation: {:?}", job_posting.compensation);
-                        println!("Job title: {:?}", job_posting.job_title);
-                        println!("Job location: {:?}", job_posting.location);
-                        println!("Job duration: {:?}", job_posting.duration);
-                        println!("Job date posted: {:?}", job_posting.date_posted);
+                        debug!(
+                            company = ?job_posting.company,
+                            technologies = ?job_posting.technologies,
+                            compensation = ?job_posting.compensation,
+                            job_title = ?job_posting.job_title,
+                            location = ?job_posting.location,
+                            duration = ?job_posting.duration,
+                            date_posted = ?job_posting.date_posted,
+                            "Extracted job posting fields"
+                        );
                     }
                     Err(err) => {
-                        println!("Could not extract JSON-LD: {err}");
+                        warn!(error = %err, "Could not extract JSON-LD");
                     }
                 }
 
@@ -215,28 +218,26 @@ pub async fn link_parse(
 
 
 
-                let string = document.root_element().text().collect::<String>();
-                // println!("Document: {}", string);
                     (aboba, llm_payloads)
                 };
                 match chat_llm(llm_payloads).await{
                     Ok(_) => {
-                        println!("\n\n\nLLM answered something, I am not collecting it at the moment\n\n\n");
+                        info!("LLM returned an answer that is not collected yet");
                     }
                     Err(err) => {
-                        println!("Error while chatting with LLM: {err}");
+                        error!(error = %err, "Error while chatting with LLM");
                     }
                 };
             } else {
-                println!("The response is not an HTML page.");
+                warn!("The response is not an HTML page");
             }
         }
         Err(error) => {
-            println!("Could not reach URL: {error}");
+            error!(error = %error, "Could not reach URL");
         }
     };
 
-    println!("Link parse endpoint hit with link: {}", payload.link);
+    info!(link = %payload.link, "Link parse endpoint hit");
     Ok((
         StatusCode::OK,
         Json(LinkResponse {

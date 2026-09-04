@@ -5,6 +5,7 @@ use anyhow::{Context, Result as AnyhowResult};
 use app_error::{AppError, LLMError};
 use llm_client::LlmClient;
 use serde_json::Value;
+use tracing::{debug, error};
 
 fn build_prompt(blob: &str) -> String {
     format!(
@@ -52,27 +53,23 @@ pub async fn chat_llm(values: Vec<Value>) -> Result<(), AppError> {
 
     let prompt = build_prompt(&blob);
 
-    println!("\n--- PROMPT ---\n");
-    println!("{prompt}");
+    debug!(prompt = %prompt, "Sending prompt to LLM");
     let answer = match llm.chat(&prompt).await {
         Ok(answer) => answer,
         Err(error) => {
-            println!("Error while chatting with LLM: {error}");
+            error!(error = %error, "Error while chatting with LLM");
             return Err(AppError::LLM(LLMError::FailedChatError { reason: error.to_string() }));
         }
     };
 
-    println!("\n--- LLM ANSWER ---\n");
-    println!("{answer}");
+    debug!(answer = %answer, "Received answer from LLM");
 
     let normalization_prompt = build_normalization_prompt(&answer);
-    println!("\n--- NORMALIZATION PROMPT ---\n");
-    println!("{normalization_prompt}");
+    debug!(prompt = %normalization_prompt, "Sending normalization prompt to LLM");
 
     let normalized_answer = llm.chat(&normalization_prompt).await?;
 
-    println!("\n--- NORMALIZED ANSWER ---\n");
-    println!("{normalized_answer}");
+    debug!(answer = %normalized_answer, "Received normalized answer from LLM");
 
     Ok(())
 }

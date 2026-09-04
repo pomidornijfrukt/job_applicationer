@@ -1,4 +1,5 @@
 use sqlx::PgPool;
+use tracing::{error, info};
 use tracing_subscriber;
 
 
@@ -17,12 +18,11 @@ async fn main() {
     // degub tracing
     tracing_subscriber::fmt::init();
 
-
     let state = AppState {
         _db: PgPool::connect("postgres://postgres:postgres@localhost:5432/postgres")
             .await
             .unwrap_or_else(|err| {
-                println!("There is no database there:\n{err}");
+                error!(error = %err, "There is no database there");
                 panic!("Failed to connect to database");
             }),
         http_client: reqwest::Client::new(),
@@ -34,7 +34,7 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
         .unwrap();
-    println!("Listening on http://localhost:3000");
+    info!("Listening on http://localhost:3000");
     axum::serve(listener, app).await.unwrap();
 }
 

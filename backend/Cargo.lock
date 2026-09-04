@@ -150,6 +150,7 @@ dependencies = [
  "chrono",
  "envy",
  "llm",
+ "log",
  "regex",
  "reqwest",
  "rquickjs",
@@ -1195,6 +1196,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

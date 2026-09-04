@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 #[derive(Clone)]
 pub struct LlmClient {
@@ -81,8 +82,7 @@ impl LlmClient {
             .await
             .context("failed to read llama-server response")?;
 
-        println!("HTTP STATUS: {}", status);
-        println!("RAW RESPONSE:\n{}", body);
+        debug!(%status, body = %body, "Received response from llama-server");
 
         if !status.is_success() {
             anyhow::bail!("llama-server returned {}: {}", status, body);
