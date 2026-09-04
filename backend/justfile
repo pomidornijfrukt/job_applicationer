@@ -1,0 +1,19 @@
+set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
+
+default:
+	@just --list
+
+run:
+	@cargo run
+
+run-debug $RUST_LOG="debug":
+	@cargo run
+
+run-info $RUST_LOG="info":
+	@cargo run
+
+run-log $RUST_LOG="debug":
+	@cargo run
+
+alias debug := run-debug
+alias info := run-info
