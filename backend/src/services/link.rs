@@ -1,10 +1,20 @@
 use axum::{Json, extract::State, http::StatusCode};
+use app_error::{AppError, ParsingError};
 use scraper::Html;
+use llm::chat_llm;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fmt;
 use url::Url;
 
-use crate::{AppState, errors::{AppError, ParsingError}, services::data_extracter::{JobPosting, extract_data, extract_json_ld, find_job_posting, scrape_page}};
+use crate::{
+    AppState,
+    services::{
+        candidates::{collect_candidates, format_path},
+        data_extracter::{extract_data, extract_json_ld, find_job_posting, scrape_page, JobPosting},
+        per_framework::nuxt::{FrameworkHandler, NuxtHandler},
+    },
+};
 
 #[derive(Deserialize, Serialize)]
 pub struct LinkBody {
@@ -141,13 +151,42 @@ pub async fn link_parse(
     match scrape_page(state.http_client, payload.link.as_str()).await {
         Ok(response) => {
             let html = response;
+            println!("THE HTML:\n\n\n\n\n{html}\n\n\n\n\nTHE END OF HTML\n");
             if html.contains("<html") {
                 println!("The response is an HTML page.");
-                let document = Html::parse_document(&html);
+                let (aboba, llm_payloads) = {
+                    let document = Html::parse_document(&html);
+                    let mut aboba = String::new();
+                    let mut llm_payloads = Vec::new();
+
+                if html.contains("window.__NUXT__=") {
+                    let nuxt_handler = NuxtHandler;
+                    match nuxt_handler.extract(&html) {
+                        Ok(payloads) => {
+                            for nuxt_payload in &payloads {
+                                let job = nuxt_handler.extract_job(&nuxt_payload, payload.link.as_str())?;
+
+                                println!("{:#?}", job);
+                                for candidate in collect_candidates(&nuxt_payload) {
+                                    aboba.push_str(&format!(
+                                        "Nuxt candidate {} = {:?}",
+                                        format_path(&candidate.path),
+                                        candidate.value
+                                    ));
+                                    aboba.push('\n');
+                                }
+                            };
+                            llm_payloads = payloads;
+                        }
+                        Err(err) => println!("Could not extract Nuxt payload: {err}"),
+                    }
+                }
+
+                // SCRAPPING THE LD
                 match extract_json_ld(&document) {
                     Ok(json_ld) => {
                         println!("All the job data:");
-
+                        println!("{:#?}", json_ld);
                         let job_posting_value = match find_job_posting(&json_ld) {
                             Some(value) => value,
                             None => {
@@ -162,11 +201,32 @@ pub async fn link_parse(
                         println!("Technologies: {:?}", job_posting.technologies);
                         println!("Compensation: {:?}", job_posting.compensation);
                         println!("Job title: {:?}", job_posting.job_title);
+                        println!("Job location: {:?}", job_posting.location);
+                        println!("Job duration: {:?}", job_posting.duration);
+                        println!("Job date posted: {:?}", job_posting.date_posted);
                     }
                     Err(err) => {
                         println!("Could not extract JSON-LD: {err}");
                     }
                 }
+
+
+                // TODO: scrape the html for data
+
+
+
+                let string = document.root_element().text().collect::<String>();
+                // println!("Document: {}", string);
+                    (aboba, llm_payloads)
+                };
+                match chat_llm(llm_payloads).await{
+                    Ok(_) => {
+                        println!("\n\n\nLLM answered something, I am not collecting it at the moment\n\n\n");
+                    }
+                    Err(err) => {
+                        println!("Error while chatting with LLM: {err}");
+                    }
+                };
             } else {
                 println!("The response is not an HTML page.");
             }

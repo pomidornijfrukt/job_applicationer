@@ -1,5 +1,10 @@
 use chrono::NaiveDate;
 use regex::Regex;
+use scraper::{Html, Selector};
+use serde::Deserialize;
+use serde_json::Value;
+
+use app_error::{AppError, ParsingError};
 
 const TECHNOLOGIES: &[&str] = &[
     "Rust",
@@ -48,8 +53,8 @@ const TECHNOLOGIES: &[&str] = &[
     "OpenAI",
 ];
 
-#[derive(Debug)]
-enum EmploymentType {
+#[derive(Debug, Deserialize)]
+pub enum EmploymentType {
     FullTime,
     PartTime,
     Contract,
@@ -60,38 +65,38 @@ enum EmploymentType {
     Other,
 }
 
+#[derive(Debug, Deserialize)]
 pub struct JobPosting {
     pub job_title: Option<String>,
     pub company: Option<String>,
     pub location: Option<Location>,
     pub description: Option<String>,
-    pub technologies: Vec<String>,
-
+    pub technologies: Option<Vec<String>>,
     pub compensation: Option<Compensation>,
     pub duration: Option<Duration>,
-
     pub date_posted: Option<NaiveDate>,
     pub valid_through: Option<NaiveDate>,
     pub employment_type: Option<EmploymentType>,
-
+    // ignores the source_string from deserialization, sets it to an empty one
+    #[serde(default)]
     pub source_url: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct Duration {
     minimum: Option<u32>,
     maximum: Option<u32>,
     unit: DurationUnit,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub enum DurationUnit {
     Weeks,
     Months,
     Years,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct Compensation {
     min: Option<i64>,
     max: Option<i64>,
@@ -99,7 +104,7 @@ pub struct Compensation {
     period: Option<PayPeriod>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub enum PayPeriod {
     Hour,
     Day,
@@ -109,7 +114,7 @@ pub enum PayPeriod {
     Unknown,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct Location {
     street: Option<String>,
     city: Option<String>,
@@ -118,23 +123,14 @@ pub struct Location {
     country: Option<String>,
     remote: bool,
 }
-use scraper::{Html, Selector};
-use serde_json::Value;
-
-use crate::errors::{AppError, ParsingError};
 
 pub fn extract_technologies(description: &str) -> Vec<String> {
     TECHNOLOGIES
         .iter()
         .filter(|technology| {
-            let pattern = format!(
-                r"(?i)(^|[^\w+#.]){}($|[^\w+#.])",
-                regex::escape(technology)
-            );
+            let pattern = format!(r"(?i)(^|[^\w+#.]){}($|[^\w+#.])", regex::escape(technology));
 
-            Regex::new(&pattern)
-                .unwrap()
-                .is_match(description)
+            Regex::new(&pattern).unwrap().is_match(description)
         })
         .map(|technology| technology.to_string())
         .collect()
@@ -151,33 +147,25 @@ pub async fn scrape_page(client: reqwest::Client, url: &str) -> Result<String, r
 }
 
 pub fn extract_json_ld(document: &Html) -> Result<Vec<Value>, AppError> {
-    let selector = match Selector::parse(r#"script[type="application/ld+json"]"#) {
-        Ok(selector) => selector,
-        Err(_) => {
-            return Err(AppError::Parsing(ParsingError::InvalidFormat {
-                expected: "script[type=\"application/ld+json\"]",
-                actual: "failed to parse selector".to_string(),
-            }));
-        }
-    };
+    let selector = Selector::parse(r#"script[type="application/ld+json"]"#).map_err(|_| {
+        AppError::Parsing(ParsingError::InvalidFormat {
+            expected: "script[type=\"application/ld+json\"]",
+            actual: "failed to parse selector".to_string(),
+        })
+    })?;
 
-    let mut values = Vec::new();
-
-    for element in document.select(&selector) {
-        let json = element.text().collect::<String>();
-        let parsed = match serde_json::from_str::<Value>(&json) {
-            Ok(value) => value,
-            Err(err) => {
-                return Err(AppError::Parsing(ParsingError::InvalidFormat {
+    document
+        .select(&selector)
+        .map(|element| {
+            let json = element.text().collect::<String>();
+            serde_json::from_str::<Value>(&json).map_err(|err| {
+                AppError::Parsing(ParsingError::InvalidFormat {
                     expected: "valid JSON in LD+JSON script",
                     actual: err.to_string(),
-                }));
-            }
-        };
-        values.push(parsed);
-    }
-
-    Ok(values)
+                })
+            })
+        })
+        .collect()
 }
 
 pub fn find_job_posting(items: &[Value]) -> Option<&Value> {
@@ -199,11 +187,10 @@ pub fn extract_data(value: &Value, source_url: String) -> Result<JobPosting, App
 
     // Technologies depend on the description,
     // so extract them after we have the description.
-    let technologies = match &description {
-        Some(description) => extract_technologies(description),
-        None => Vec::new(),
-    };
-
+    let technologies = description
+        .as_deref()
+        .map(extract_technologies)
+        .unwrap_or_default();
     let company = value
         .get("hiringOrganization")
         .and_then(|org| org.get("name"))
@@ -222,7 +209,7 @@ pub fn extract_data(value: &Value, source_url: String) -> Result<JobPosting, App
         company,
         location: None,
         description,
-        technologies,
+        technologies: Some(technologies),
         compensation: None,
         duration: None,
         date_posted: None,
@@ -231,4 +218,3 @@ pub fn extract_data(value: &Value, source_url: String) -> Result<JobPosting, App
         source_url,
     })
 }
-

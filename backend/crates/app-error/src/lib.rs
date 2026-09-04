@@ -1,5 +1,8 @@
-use axum::{Json, response::{IntoResponse, Response}};
-use reqwest::StatusCode;
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    Json,
+};
 use serde::Serialize;
 use thiserror::Error;
 
@@ -7,6 +10,9 @@ use thiserror::Error;
 pub enum AppError {
     #[error(transparent)]
     Data(#[from] DataError),
+
+    #[error(transparent)]
+    LLM(#[from] LLMError),
 
     #[error(transparent)]
     Parsing(#[from] ParsingError),
@@ -25,11 +31,16 @@ pub enum DataError {
 }
 
 #[derive(Debug, Error)]
+pub enum LLMError {
+    #[error("couldn't start a chat for this reason:\n{reason}")]
+    FailedChatError { reason: String },
+}
+
+
+#[derive(Debug, Error)]
 pub enum ParsingError {
     #[error("no data found {details}")]
-    NoDataError {
-        details: String
-    },
+    NoDataError { details: String },
 
     #[error("invalid format: expected {expected}. actual error: {actual}")]
     InvalidFormat {
@@ -46,7 +57,6 @@ struct ErrorResponse {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        // `self` still contains all the detailed information.
         tracing::error!(error = ?self, "request failed");
 
         let (status, body) = match &self {
@@ -57,7 +67,6 @@ impl IntoResponse for AppError {
                     message: "Invalid format provided in the request",
                 },
             ),
-
             AppError::Parsing(ParsingError::NoDataError { .. }) => (
                 StatusCode::BAD_REQUEST,
                 ErrorResponse {
@@ -65,7 +74,6 @@ impl IntoResponse for AppError {
                     message: "No data found for the given request",
                 },
             ),
-
             AppError::Data(DataError::GetError { .. }) => (
                 StatusCode::BAD_REQUEST,
                 ErrorResponse {
@@ -73,7 +81,6 @@ impl IntoResponse for AppError {
                     message: "Could not get data",
                 },
             ),
-
             AppError::Data(DataError::InsertError { .. }) => (
                 StatusCode::BAD_REQUEST,
                 ErrorResponse {
@@ -81,14 +88,20 @@ impl IntoResponse for AppError {
                     message: "Could not insert data",
                 },
             ),
-
-            AppError::Internal(anyhow::Error { .. }) => (
+            AppError::Internal(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ErrorResponse {
                     code: "INTERNAL_SERVER_ERROR",
-                    message: "Service doesn't seems to be healthy, try again later",
+                    message: "Service doesn't seem to be healthy, try again later",
                 },
             ),
+            &AppError::LLM(LLMError::FailedChatError { .. }) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorResponse {
+                    code: "LLM_FAILED_CHAT",
+                    message: "LLM failed to chat",
+                },
+            )
         };
 
         (status, Json(body)).into_response()

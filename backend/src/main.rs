@@ -5,7 +5,6 @@ use tracing_subscriber;
 mod routes;
 pub mod services;
 mod tools;
-mod errors;
 #[derive(Clone)]
 pub struct AppState {
     _db: PgPool,
