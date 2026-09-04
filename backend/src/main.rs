@@ -1,6 +1,5 @@
 use sqlx::PgPool;
 use tracing::{error, info};
-use tracing_subscriber;
 
 
 mod routes;

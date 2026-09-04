@@ -3,7 +3,6 @@ use app_error::{AppError, ParsingError};
 use scraper::Html;
 use llm::chat_llm;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::fmt;
 use tracing::{debug, error, info, warn};
 use url::Url;
@@ -12,7 +11,7 @@ use crate::{
     AppState,
     services::{
         candidates::{collect_candidates, format_path},
-        data_extracter::{extract_data, extract_json_ld, find_job_posting, scrape_page, JobPosting},
+        data_extracter::{extract_data, extract_json_ld, find_job_posting, scrape_page},
         per_framework::nuxt::{FrameworkHandler, NuxtHandler},
     },
 };
@@ -155,7 +154,7 @@ pub async fn link_parse(
             debug!(html = %html, "Received HTML response");
             if html.contains("<html") {
                 info!("The response is an HTML page");
-                let (aboba, llm_payloads) = {
+                let (_aboba, llm_payloads) = {
                     let document = Html::parse_document(&html);
                     let mut aboba = String::new();
                     let mut llm_payloads = Vec::new();
@@ -165,10 +164,10 @@ pub async fn link_parse(
                     match nuxt_handler.extract(&html) {
                         Ok(payloads) => {
                             for nuxt_payload in &payloads {
-                                let job = nuxt_handler.extract_job(&nuxt_payload, payload.link.as_str())?;
+                                let job = nuxt_handler.extract_job(nuxt_payload, payload.link.as_str())?;
 
                                 debug!(?job, "Extracted job from Nuxt payload");
-                                for candidate in collect_candidates(&nuxt_payload) {
+                                for candidate in collect_candidates(nuxt_payload) {
                                     aboba.push_str(&format!(
                                         "Nuxt candidate {} = {:?}",
                                         format_path(&candidate.path),
