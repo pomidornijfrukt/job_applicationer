@@ -1,10 +1,10 @@
-use axum::{Json, extract::State, http::StatusCode};
 use app_error::{AppError, ParsingError};
-use scraper::Html;
+use axum::{Json, extract::State, http::StatusCode};
 use llm::chat_llm;
+use scraper::Html;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fmt;
+use std::{collections::HashSet, fmt};
 use tracing::{debug, error, info, warn};
 use url::Url;
 
@@ -134,7 +134,6 @@ pub async fn link_parse(
         }
     }
 
-
     if payload.link.as_str().trim().is_empty() {
         return Err(AppError::Parsing(ParsingError::NoDataError {
             details: "No link provided".to_string(),
@@ -160,71 +159,83 @@ pub async fn link_parse(
                     let mut aboba = String::new();
                     let mut llm_payloads = Vec::new();
 
-                if html.contains("window.__NUXT__=") {
-                    let nuxt_handler = NuxtHandler;
-                    match nuxt_handler.extract(&html) {
-                        Ok(payloads) => {
-                            for nuxt_payload in &payloads {
-                                let job = nuxt_handler.extract_job(nuxt_payload, payload.link.as_str())?;
+                    if html.contains("window.__NUXT__=") {
+                        let nuxt_handler = NuxtHandler;
+                        match nuxt_handler.extract(&html) {
+                            Ok(payloads) => {
+                                for nuxt_payload in &payloads {
+                                    let job = nuxt_handler
+                                        .extract_job(nuxt_payload, payload.link.as_str())?;
 
-                                debug!(?job, "Extracted job from Nuxt payload");
-                                for candidate in collect_candidates(nuxt_payload) {
-                                    aboba.push_str(&format!(
-                                        "Nuxt candidate {} = {:?}",
-                                        format_path(&candidate.path),
-                                        candidate.value
-                                    ));
-                                    aboba.push('\n');
+                                    debug!(?job, "Extracted job from Nuxt payload");
+                                    for candidate in collect_candidates(nuxt_payload) {
+                                        aboba.push_str(&format!(
+                                            "Nuxt candidate {} = {:?}",
+                                            format_path(&candidate.path),
+                                            candidate.value
+                                        ));
+                                        aboba.push('\n');
+                                    }
                                 }
-                            };
-                            llm_payloads = payloads;
-                        }
-                        Err(err) => warn!(error = %err, "Could not extract Nuxt payload"),
-                    }
-                }
-
-                // SCRAPPING THE LD
-                match extract_json_ld(&document) {
-                    Ok(json_ld) => {
-                        debug!(?json_ld, "Extracted JSON-LD job data");
-                        match find_job_posting(&json_ld) {
-                            Some(job_posting_value) => {
-                                let job_posting = extract_data(job_posting_value, payload.link.clone())?;
-                                debug!(
-                                    company = ?job_posting.company,
-                                    technologies = ?job_posting.technologies,
-                                    compensation = ?job_posting.compensation,
-                                    job_title = ?job_posting.job_title,
-                                    location = ?job_posting.location,
-                                    duration = ?job_posting.duration,
-                                    date_posted = ?job_posting.date_posted,
-                                    "Extracted job posting fields"
-                                );
+                                llm_payloads = payloads;
                             }
-                            None => {
-                                warn!("No valid JobPosting JSON-LD block found; continuing with other extraction");
-                            }
+                            Err(err) => warn!(error = %err, "Could not extract Nuxt payload"),
                         }
                     }
-                    Err(err) => {
-                        warn!(error = %err, "Could not extract JSON-LD");
-                    }
-                }
 
-                if llm_payloads.is_empty() {
-                    warn!("No LLM payloads extracted; going with just blank html");
-                    llm_payloads = match scrape_html(&html) {
-                        Ok(llm_payloads) => llm_payloads,
+                    // SCRAPPING THE LD
+                    match extract_json_ld(&document) {
+                        Ok(json_ld) => {
+                            debug!(?json_ld, "Extracted JSON-LD job data");
+                            match find_job_posting(&json_ld) {
+                                Some(job_posting_value) => {
+                                    match extract_data(job_posting_value, payload.link.clone()) {
+                                        Ok(job_posting) => {
+                                            debug!(
+                                                company = ?job_posting.company,
+                                                technologies = ?job_posting.technologies,
+                                                compensation = ?job_posting.compensation,
+                                                job_title = ?job_posting.job_title,
+                                                location = ?job_posting.location,
+                                                duration = ?job_posting.duration,
+                                                date_posted = ?job_posting.date_posted,
+                                                "Extracted job posting fields"
+                                            );
+                                        }
+                                        Err(err) => {
+                                            error!(error = %err, "Could not extract job posting data");
+                                        }
+                                    }
+                                }
+                                None => {
+                                    warn!(
+                                        "No valid JobPosting JSON-LD block found; continuing with other extraction"
+                                    );
+                                }
+                            }
+                        }
                         Err(err) => {
-                            error! (error = %err, "Could not scrape HTML for LLM payloads");
-                            Vec::new()
+                            warn!(error = %err, "Could not extract JSON-LD");
                         }
-                    };
-                }
+                    }
+
+                    if llm_payloads.is_empty() {
+                        warn!("No LLM payloads extracted; going with just blank html");
+                        llm_payloads = match scrape_html(&html) {
+                            Ok(llm_payloads) => {
+                                debug!(?llm_payloads, "Scraped LLM payloads from HTML");
+                                llm_payloads
+                            }
+                            Err(err) => {
+                                error! (error = %err, "Could not scrape HTML for LLM payloads");
+                                Vec::new()
+                            }
+                        };
+                    }
 
                     (aboba, llm_payloads)
                 };
-                match chat_llm(llm_payloads).await{
+                match chat_llm(llm_payloads).await {
                     Ok(_) => {
                         info!("LLM returned an answer that is not collected yet");
                     }
@@ -253,13 +264,68 @@ pub async fn link_parse(
 }
 
 fn scrape_html(html: &str) -> Result<Vec<Value>, AppError> {
-    if html.contains("<html") {
-        let document = Html::parse_document(html);
-        extract_json_ld(&document)
-    } else {
+    if !html.to_ascii_lowercase().contains("<html") {
         Err(AppError::Parsing(ParsingError::InvalidFormat {
             expected: "HTML document",
             actual: "Response is not an HTML document".to_string(),
         }))
+    } else {
+        let document = Html::parse_document(html);
+
+        let selector = scraper::Selector::parse("*").map_err(|_| {
+            AppError::Parsing(ParsingError::InvalidFormat {
+                expected: "*",
+                actual: "failed to parse selector".to_string(),
+            })
+        })?;
+        let mut seen = HashSet::new();
+        let values = document
+            .select(&selector)
+            .filter_map(|html_element| {
+                let tag_name = html_element.value().name();
+                if matches!(
+                    tag_name,
+                    "html"
+                        | "head"
+                        | "body"
+                        | "link"
+                        | "style"
+                        | "script"
+                        | "noscript"
+                        | "meta"
+                        | "title"
+                        | "template"
+                        | "nav"
+                        | "footer"
+                        | "form"
+                        | "input"
+                        | "button"
+                        | "select"
+                        | "option"
+                        | "textarea"
+                        | "iframe"
+                        | "svg"
+                        | "canvas"
+                ) {
+                    return None;
+                }
+                // let raw_html = html_element.html();
+                // Normalize whitespace so formatting differences do not defeat deduplication.
+                let text = html_element
+                    .text()
+                    .collect::<String>()
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+
+                if text.is_empty() || !seen.insert(text.clone()) {
+                    None
+                } else {
+                    Some(Value::String(text))
+                }
+            })
+            .collect();
+
+        Ok(values)
     }
 }
