@@ -11,7 +11,7 @@ pub struct LlmClient {
 
 #[derive(Debug, Serialize)]
 struct ChatRequest {
-    model: String,
+    model: Option<String>,
     messages: Vec<Message>,
     temperature: f32,
     max_tokens: u32,
@@ -56,7 +56,8 @@ impl LlmClient {
 
     pub async fn chat(&self, prompt: &str) -> Result<String> {
         let request = ChatRequest {
-            model: "Qwen3-1.7B".to_string(),
+            model: None,
+            // model: "Qwen3-1.7B".to_string(),
             messages: vec![Message {
                 role: "user".to_string(),
                 content: prompt.to_string(),
