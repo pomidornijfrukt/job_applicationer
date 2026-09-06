@@ -1,0 +1,12 @@
+[package]
+name = "db"
+version = "0.0.1"
+edition = "2024"
+
+[dependencies]
+diesel = { version = "2.2.0", features = ["postgres"] }
+# build libpq and openssl as part of the build process
+# uncomment these lines if you run into setup issues
+# pq-sys = { version = "0.6", features = ["bundled"] }
+# openssl-sys = { version = "0.9.100", features = ["vendored"] }
+dotenvy = "0.15"
