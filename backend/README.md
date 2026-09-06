@@ -11,3 +11,9 @@ cargo install --locked bacon
 ```sh
 bacon run
 ```
+
+
+# for easier debugging using the justfle
+```sh
+just debug
+```
